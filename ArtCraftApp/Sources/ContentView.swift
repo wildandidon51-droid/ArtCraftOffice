@@ -1,15 +1,6 @@
 
 import SwiftUI
 
-@main
-struct ArtCraftOfficeApp: App {
-    var body: some Scene {
-        WindowGroup {
-            ContentView()
-        }
-    }
-}
-
 struct ContentView: View {
 
     private let columns = [

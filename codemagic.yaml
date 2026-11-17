@@ -1,0 +1,30 @@
+
+workflows:
+  ios-workflow:
+    name: ArtCraft Office iOS Build
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+
+    environment:
+      xcode: latest
+
+    scripts:
+      - name: Install XcodeGen
+        script: |
+          brew install xcodegen
+
+      - name: Generate Xcode project
+        script: |
+          xcodegen generate --spec ArtCraftApp/project.yml
+
+      - name: Build iPadOS app
+        script: |
+          xcodebuild \
+            -project ArtCraftOffice.xcodeproj \
+            -scheme ArtCraftOffice \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO
+
+    artifacts:
+      - build/Build/Products/**/*.app

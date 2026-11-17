@@ -1,38 +1,17 @@
 
 import SwiftUI
 
+// MARK: - Dashboard
+
 struct ContentView: View {
+
+    @State private var selectedModule: OfficeModule?
 
     private let columns = [
         GridItem(.adaptive(minimum: 240), spacing: 20)
     ]
 
-    private let modules: [OfficeModule] = [
-        OfficeModule(
-            name: "WordCraft",
-            description: "Create and edit documents",
-            icon: "doc.text",
-            color: .blue
-        ),
-        OfficeModule(
-            name: "GridCraft",
-            description: "Organize data and spreadsheets",
-            icon: "tablecells",
-            color: .green
-        ),
-        OfficeModule(
-            name: "DeckCraft",
-            description: "Create beautiful presentations",
-            icon: "rectangle.on.rectangle",
-            color: .orange
-        ),
-        OfficeModule(
-            name: "PdfCraft",
-            description: "Read and manage PDF files",
-            icon: "doc.richtext",
-            color: .red
-        )
-    ]
+    private let modules = OfficeModule.allCases
 
     var body: some View {
         NavigationStack {
@@ -53,7 +32,9 @@ struct ContentView: View {
 
                     LazyVGrid(columns: columns, spacing: 20) {
                         ForEach(modules) { module in
-                            ModuleCard(module: module)
+                            ModuleCard(module: module) {
+                                selectedModule = module
+                            }
                         }
                     }
                 }
@@ -67,49 +48,136 @@ struct ContentView: View {
                 }
             }
         }
+        .sheet(item: $selectedModule) { module in
+            ModuleDetailView(module: module)
+        }
     }
 }
 
-struct OfficeModule: Identifiable {
-    let id = UUID()
-    let name: String
-    let description: String
-    let icon: String
-    let color: Color
+// MARK: - Office Modules
+
+enum OfficeModule: String, CaseIterable, Identifiable {
+
+    case wordCraft = "WordCraft"
+    case gridCraft = "GridCraft"
+    case deckCraft = "DeckCraft"
+    case pdfCraft = "PdfCraft"
+
+    var id: String { rawValue }
+
+    var description: String {
+        switch self {
+        case .wordCraft:
+            return "Create and edit documents"
+        case .gridCraft:
+            return "Organize data and spreadsheets"
+        case .deckCraft:
+            return "Create beautiful presentations"
+        case .pdfCraft:
+            return "Read and manage PDF files"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .wordCraft: return "doc.text"
+        case .gridCraft: return "tablecells"
+        case .deckCraft: return "rectangle.on.rectangle"
+        case .pdfCraft: return "doc.richtext"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .wordCraft: return .blue
+        case .gridCraft: return .green
+        case .deckCraft: return .orange
+        case .pdfCraft: return .red
+        }
+    }
 }
 
+// MARK: - Module Card
+
 struct ModuleCard: View {
+
     let module: OfficeModule
+    let action: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Image(systemName: module.icon)
-                .font(.system(size: 32))
-                .foregroundStyle(module.color)
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 16) {
 
-            Text(module.name)
-                .font(.title2.bold())
-
-            Text(module.description)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-
-            Spacer(minLength: 4)
-
-            HStack {
-                Text("Coming Soon")
-                    .font(.caption.weight(.medium))
+                Image(systemName: module.icon)
+                    .font(.system(size: 32))
                     .foregroundStyle(module.color)
 
-                Spacer()
+                Text(module.rawValue)
+                    .font(.title2.bold())
+                    .foregroundStyle(.primary)
 
-                Image(systemName: "arrow.up.right")
+                Text(module.description)
+                    .font(.subheadline)
                     .foregroundStyle(.secondary)
+
+                Spacer(minLength: 4)
+
+                HStack {
+                    Text("IN DEVELOPMENT")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(module.color)
+
+                    Spacer()
+
+                    Image(systemName: "arrow.up.right")
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(24)
+            .frame(maxWidth: .infinity, minHeight: 180)
+            .background(Color(uiColor: .secondarySystemBackground))
+            .clipShape(RoundedRectangle(cornerRadius: 20))
+            .contentShape(RoundedRectangle(cornerRadius: 20))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Module Detail
+
+struct ModuleDetailView: View {
+
+    let module: OfficeModule
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if module == .wordCraft {
+                    WordCraftView()
+                } else {
+                    VStack(spacing: 16) {
+                        Image(systemName: module.icon)
+                            .font(.system(size: 52))
+                            .foregroundStyle(module.color)
+
+                        Text(module.rawValue)
+                            .font(.largeTitle.bold())
+
+                        Text("This module is under development.")
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
             }
         }
-        .padding(24)
-        .frame(maxWidth: .infinity, minHeight: 180)
-        .background(Color(uiColor: .secondarySystemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 20))
     }
 }

@@ -1,0 +1,17 @@
+
+# Rust
+/target/
+**/*.rs.bk
+
+# Xcode
+DerivedData/
+build/
+*.xcuserstate
+*.xccheckout
+*.xcscmblueprint
+
+# macOS
+.DS_Store
+
+# VS Code
+.vscode/

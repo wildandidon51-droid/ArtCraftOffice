@@ -15,15 +15,18 @@ workflows:
 
       - name: Generate Xcode project
         script: |
-          xcodegen generate --spec ArtCraftApp/project.yml
+          cd ArtCraftApp
+          xcodegen generate --spec project.yml
+          ls -la
 
       - name: Build iPadOS app
         script: |
+          cd ArtCraftApp
           xcodebuild \
             -project ArtCraftOffice.xcodeproj \
             -scheme ArtCraftOffice \
             -destination 'generic/platform=iOS Simulator' \
-            -derivedDataPath build \
+            -derivedDataPath ../build \
             CODE_SIGNING_ALLOWED=NO
 
     artifacts:

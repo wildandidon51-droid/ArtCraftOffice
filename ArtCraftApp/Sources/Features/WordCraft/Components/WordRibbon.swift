@@ -12,7 +12,7 @@ enum WordRibbonTab: String, CaseIterable {
     case view = "View"
 }
 
-enum WordPaperSize: String, CaseIterable, Identifiable {
+enum WordPaperSize: String, CaseIterable, Identifiable, Codable {
     case a4 = "A4"
     case letter = "Letter"
     case legal = "Legal"
@@ -31,14 +31,14 @@ enum WordPaperSize: String, CaseIterable, Identifiable {
     }
 }
 
-enum WordPageOrientation: String, CaseIterable, Identifiable {
+enum WordPageOrientation: String, CaseIterable, Identifiable, Codable {
     case portrait = "Portrait"
     case landscape = "Landscape"
 
     var id: String { rawValue }
 }
 
-enum WordMarginPreset: String, CaseIterable, Identifiable {
+enum WordMarginPreset: String, CaseIterable, Identifiable, Codable {
     case normal = "Normal"
     case narrow = "Narrow"
     case moderate = "Moderate"
@@ -69,9 +69,13 @@ struct WordRibbon: View {
     @Binding var isBold: Bool
     @Binding var isItalic: Bool
     @Binding var isUnderlined: Bool
+    @Binding var isHighlighted: Bool
 
     @Binding var fontSize: Double
     @Binding var fontFamily: String
+    @Binding var textStyle: String
+    @Binding var textColor: Color
+    @Binding var highlightColor: Color
 
     @Binding var paragraphAlignment: NSTextAlignment
     @Binding var lineSpacing: Double
@@ -79,12 +83,16 @@ struct WordRibbon: View {
     @Binding var paperSize: WordPaperSize
     @Binding var pageOrientation: WordPageOrientation
     @Binding var marginPreset: WordMarginPreset
+    var documentText: String
 
     var onBullets: () -> Void
     var onNumbering: () -> Void
     var onDecreaseIndent: () -> Void
     var onIncreaseIndent: () -> Void
     var onInsertPageBreak: () -> Void
+    var onFindReplace: () -> Void
+    var onUndo: () -> Void
+    var onRedo: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -125,15 +133,40 @@ struct WordRibbon: View {
                 layoutToolbar
             case .insert:
                 insertToolbar
-            case .review, .view:
-                Text("\(selectedTab.rawValue) tools coming soon")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, minHeight: 48)
+            case .review:
+                reviewToolbar
+            case .view:
+                viewToolbar
             }
         }
         .padding(16)
         .background(Color(uiColor: .secondarySystemBackground))
+    }
+
+    private var reviewToolbar: some View {
+        HStack(spacing: 28) {
+            Label("\(documentText.split { $0.isWhitespace || $0.isNewline }.count) words", systemImage: "text.word.spacing")
+            Label("\(documentText.count) characters", systemImage: "character.cursor.ibeam")
+            Button(action: onFindReplace) {
+                Label("Find and replace", systemImage: "magnifyingglass")
+            }
+            .buttonStyle(.bordered)
+            Spacer()
+        }
+        .font(.subheadline)
+        .foregroundStyle(.secondary)
+        .frame(minHeight: 48)
+    }
+
+    private var viewToolbar: some View {
+        HStack(spacing: 12) {
+            Label("Page view", systemImage: "doc.text")
+            Text(paperSize.rawValue + " · " + pageOrientation.rawValue)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Spacer()
+        }
+        .frame(minHeight: 48)
     }
 
     // MARK: - Home Toolbar
@@ -141,6 +174,48 @@ struct WordRibbon: View {
     private var homeToolbar: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 20) {
+
+                VStack(spacing: 6) {
+                    Text("History").font(.caption).foregroundStyle(.secondary)
+                    HStack(spacing: 8) {
+                        Button(action: onUndo) { Image(systemName: "arrow.uturn.backward") }.help("Undo")
+                        Button(action: onRedo) { Image(systemName: "arrow.uturn.forward") }.help("Redo")
+                    }
+                }
+
+                Divider().frame(height: 45)
+
+                VStack(spacing: 6) {
+                    Text("Text color").font(.caption).foregroundStyle(.secondary)
+                    ColorPicker("Text color", selection: $textColor, supportsOpacity: false)
+                        .labelsHidden().frame(width: 40)
+                }
+
+                Divider().frame(height: 45)
+
+                VStack(spacing: 6) {
+                    Text("Highlight").font(.caption).foregroundStyle(.secondary)
+                    HStack(spacing: 8) {
+                        ColorPicker("Highlight color", selection: $highlightColor, supportsOpacity: false).labelsHidden().frame(width: 38)
+                        formatButton("highlighter", isActive: isHighlighted) { isHighlighted.toggle() }
+                    }
+                }
+
+                Divider().frame(height: 45)
+
+                VStack(spacing: 6) {
+                    Text("Styles").font(.caption).foregroundStyle(.secondary)
+                    Picker("Style", selection: $textStyle) {
+                        Text("Normal").tag("Normal")
+                        Text("Title").tag("Title")
+                        Text("Heading 1").tag("Heading 1")
+                        Text("Heading 2").tag("Heading 2")
+                    }
+                    .pickerStyle(.menu)
+                    .frame(width: 130)
+                }
+
+                Divider().frame(height: 45)
 
                 VStack(spacing: 6) {
                     Text("Font")

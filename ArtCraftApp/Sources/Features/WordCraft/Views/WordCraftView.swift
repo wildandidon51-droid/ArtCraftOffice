@@ -1,12 +1,24 @@
 
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 
 struct WordCraftView: View {
+    @Environment(\.undoManager) private var undoManager
 
     // MARK: - Document State
 
     @State private var documentTitle = "Untitled Document"
+    @State private var activeDocument = WordDocument()
+    @StateObject private var documentStore = WordDocumentStore()
+    @State private var showingDocuments = false
+    @State private var showingImporter = false
+    @State private var showingFindReplace = false
+    @State private var exportURL: URL?
+    @State private var pendingAutoSave: Task<Void, Never>?
+    @State private var findQuery = ""
+    @State private var replacementQuery = ""
+    @State private var findStatus = ""
 
     @State private var attributedText = NSAttributedString(string: "")
     @State private var selectedRange = NSRange(location: 0, length: 0)
@@ -19,14 +31,18 @@ struct WordCraftView: View {
 
     @State private var fontFamily = "System"
     @State private var fontSize: Double = 16
+    @State private var textStyle = "Normal"
 
     @State private var isBold = false
     @State private var isItalic = false
     @State private var isUnderlined = false
+    @State private var isHighlighted = false
 
     @State private var paragraphAlignment: NSTextAlignment = .left
     @State private var lineSpacing: Double = 1.0
     @State private var paragraphIndent: Double = 0
+    @State private var textColor: Color = .black
+    @State private var highlightColor: Color = .yellow
 
     // MARK: - Page Layout State
 
@@ -65,9 +81,10 @@ struct WordCraftView: View {
                     Text("WordCraft")
                         .font(.headline)
 
-                    Text(documentTitle)
+                    TextField("Document title", text: $documentTitle)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .textFieldStyle(.plain)
                 }
 
                 Spacer()
@@ -79,6 +96,48 @@ struct WordCraftView: View {
                         "New",
                         systemImage: "doc.badge.plus"
                     )
+                }
+                .buttonStyle(.bordered)
+
+                Button {
+                    saveCurrentDocument()
+                } label: {
+                    Label("Save", systemImage: "square.and.arrow.down")
+                }
+                .buttonStyle(.borderedProminent)
+
+                Button {
+                    showingDocuments = true
+                } label: {
+                    Label("Documents", systemImage: "folder")
+                }
+                .buttonStyle(.bordered)
+
+                Button {
+                    showingImporter = true
+                } label: {
+                    Label("Open", systemImage: "folder")
+                }
+                .buttonStyle(.bordered)
+
+                if let exportURL {
+                    ShareLink(item: exportURL) {
+                        Label("Export", systemImage: "square.and.arrow.up")
+                    }
+                    .buttonStyle(.bordered)
+                } else {
+                    Menu {
+                        Button("Word document (.docx)", systemImage: "doc.text", action: prepareDocxExport)
+                        Button("Rich Text (.rtf)", systemImage: "text.alignleft", action: prepareExport)
+                        Button("PDF (.pdf)", systemImage: "doc.richtext", action: preparePDFExport)
+                    } label: { Label("Export", systemImage: "square.and.arrow.up") }
+                        .buttonStyle(.bordered)
+                }
+
+                Button {
+                    printDocument()
+                } label: {
+                    Label("Print", systemImage: "printer")
                 }
                 .buttonStyle(.bordered)
             }
@@ -94,9 +153,13 @@ struct WordCraftView: View {
                 isBold: $isBold,
                 isItalic: $isItalic,
                 isUnderlined: $isUnderlined,
+                isHighlighted: $isHighlighted,
 
                 fontSize: $fontSize,
                 fontFamily: $fontFamily,
+                textStyle: $textStyle,
+                textColor: $textColor,
+                highlightColor: $highlightColor,
 
                 paragraphAlignment: $paragraphAlignment,
                 lineSpacing: $lineSpacing,
@@ -104,6 +167,7 @@ struct WordCraftView: View {
                 paperSize: $paperSize,
                 pageOrientation: $pageOrientation,
                 marginPreset: $marginPreset,
+                documentText: attributedText.string,
 
                 onBullets: {
                     insertListPrefix("• ")
@@ -123,6 +187,18 @@ struct WordCraftView: View {
 
                 onInsertPageBreak: {
                     insertPageBreak()
+                },
+
+                onFindReplace: {
+                    showingFindReplace = true
+                },
+
+                onUndo: {
+                    undoManager?.undo()
+                },
+
+                onRedo: {
+                    undoManager?.redo()
                 }
             )
 
@@ -142,9 +218,12 @@ struct WordCraftView: View {
                         isBold: $isBold,
                         isItalic: $isItalic,
                         isUnderlined: $isUnderlined,
+                        isHighlighted: $isHighlighted,
 
                         fontSize: $fontSize,
                         fontFamily: $fontFamily,
+                        textColor: $textColor,
+                        highlightColor: $highlightColor,
 
                         paragraphAlignment: $paragraphAlignment,
                         lineSpacing: $lineSpacing,
@@ -158,7 +237,7 @@ struct WordCraftView: View {
                         width: pageDimensions.width,
                         height: contentHeight
                     )
-                    .background(Color.white)
+                    .background(PageCanvasBackground(pageHeight: pageDimensions.height))
                     .clipShape(
                         RoundedRectangle(cornerRadius: 2)
                     )
@@ -175,12 +254,122 @@ struct WordCraftView: View {
             .background(
                 Color(uiColor: .systemGroupedBackground)
             )
+
+            HStack(spacing: 18) {
+                Label("\(max(1, Int(ceil(contentHeight / pageDimensions.height))) pages", systemImage: "doc.text")
+                Label("\(attributedText.string.split { $0.isWhitespace || $0.isNewline }.count) words", systemImage: "text.word.spacing")
+                Spacer()
+                Text(documentStore.lastError ?? "Saved on this iPad")
+                    .lineLimit(1)
+            }
+            .font(.caption)
+            .foregroundStyle(documentStore.lastError == nil ? .secondary : .red)
+            .padding(.horizontal, 16).padding(.vertical, 8)
+            .background(.bar)
         }
         .background(
             Color(uiColor: .systemBackground)
         )
         .navigationTitle(documentTitle)
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showingDocuments) {
+            NavigationStack {
+                List {
+                    ForEach(documentStore.documents) { document in
+                        Button {
+                            openDocument(document)
+                            showingDocuments = false
+                        } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(document.title).font(.headline).foregroundStyle(.primary)
+                                Text(document.content.isEmpty ? "No content" : document.content)
+                                    .font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                                Text(document.modifiedAt.formatted(date: .abbreviated, time: .shortened))
+                                    .font(.caption2).foregroundStyle(.tertiary)
+                            }
+                        }
+                    }
+                    .onDelete(perform: documentStore.delete)
+                }
+                .overlay {
+                    if documentStore.documents.isEmpty {
+                        ContentUnavailableView("No saved documents", systemImage: "doc.text", description: Text("Save a document to find it here."))
+                    }
+                }
+                .navigationTitle("Documents")
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) { EditButton() }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Done") { showingDocuments = false }
+                    }
+                }
+            }
+        }
+        .fileImporter(isPresented: $showingImporter, allowedContentTypes: [.rtf, .plainText, UTType(filenameExtension: "docx") ?? .data], allowsMultipleSelection: false) { result in
+            do {
+                pendingAutoSave?.cancel()
+                saveCurrentDocument()
+                let url = try result.get().first!
+                let accessed = url.startAccessingSecurityScopedResource()
+                defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+                let data = try Data(contentsOf: url)
+                if url.pathExtension.lowercased() == "docx" {
+                    let imported = try WordDocxCodec.decodeDocument(data)
+                    attributedText = imported.attributedText
+                    paperSize = imported.paperSize
+                    pageOrientation = imported.pageOrientation
+                    marginPreset = imported.marginPreset
+                } else if url.pathExtension.lowercased() == "rtf",
+                   let richText = try? NSAttributedString(data: data, options: [.documentType: NSAttributedString.DocumentType.rtf], documentAttributes: nil) {
+                    attributedText = richText
+                } else if let text = String(data: data, encoding: .utf8) {
+                    attributedText = NSAttributedString(string: text, attributes: typingAttributes())
+                } else {
+                    throw CocoaError(.fileReadInapplicableStringEncoding)
+                }
+                activeDocument = WordDocument(
+                    title: url.deletingPathExtension().lastPathComponent,
+                    paperSize: paperSize,
+                    pageOrientation: pageOrientation,
+                    marginPreset: marginPreset
+                )
+                documentTitle = activeDocument.title
+                selectedRange = NSRange(location: 0, length: 0)
+                contentHeight = max(842, pageDimensions.height)
+                exportURL = nil
+                saveCurrentDocument()
+            } catch {
+                documentStore.reportError("Could not open the selected document. The current draft is still open.")
+            }
+        }
+        .sheet(isPresented: $showingFindReplace) {
+            NavigationStack {
+                Form {
+                    Section("Find") {
+                        TextField("Search text", text: $findQuery)
+                            .submitLabel(.search)
+                            .onSubmit(findNext)
+                        Button("Find next", systemImage: "magnifyingglass", action: findNext)
+                    }
+                    Section("Replace") {
+                        TextField("Replace with", text: $replacementQuery)
+                        Button("Replace all", systemImage: "text.badge.plus", action: replaceAll)
+                            .disabled(findQuery.isEmpty)
+                    }
+                    if !findStatus.isEmpty {
+                        Section { Text(findStatus).foregroundStyle(.secondary) }
+                    }
+                }
+                .navigationTitle("Find and replace")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Done") { showingFindReplace = false }
+                    }
+                }
+            }
+            .presentationDetents([.medium, .large])
+        }
 
         // MARK: - Formatting Observers
 
@@ -196,8 +385,24 @@ struct WordCraftView: View {
             applyUnderline(enabled: value)
         }
 
+        .onChange(of: isHighlighted) { _, value in
+            applyHighlight(enabled: value)
+        }
+
+        .onChange(of: textColor) { _, color in
+            applyTextColor(color)
+        }
+
+        .onChange(of: highlightColor) { _, color in
+            if isHighlighted { applyHighlight(color: color) }
+        }
+
         .onChange(of: fontSize) { _, value in
             applyFontSize(value)
+        }
+
+        .onChange(of: textStyle) { _, style in
+            applyTextStyle(style)
         }
 
         .onChange(of: fontFamily) { _, value in
@@ -211,12 +416,28 @@ struct WordCraftView: View {
         .onChange(of: lineSpacing) { _, value in
             applyLineSpacing(value)
         }
+        .onChange(of: attributedText) { _, _ in
+            scheduleAutoSave()
+        }
+        .onChange(of: documentTitle) { _, _ in
+            scheduleAutoSave()
+        }
+        .onChange(of: paperSize) { _, _ in scheduleAutoSave() }
+        .onChange(of: pageOrientation) { _, _ in scheduleAutoSave() }
+        .onChange(of: marginPreset) { _, _ in scheduleAutoSave() }
+        .onDisappear {
+            pendingAutoSave?.cancel()
+            saveCurrentDocument()
+        }
     }
 
     // MARK: - New Document
 
     private func createNewDocument() {
 
+        pendingAutoSave?.cancel()
+        saveCurrentDocument()
+        activeDocument = WordDocument()
         documentTitle = "Untitled Document"
 
         attributedText = NSAttributedString(string: "")
@@ -225,9 +446,13 @@ struct WordCraftView: View {
         isBold = false
         isItalic = false
         isUnderlined = false
+        isHighlighted = false
+        textColor = .black
+        highlightColor = .yellow
 
         fontFamily = "System"
         fontSize = 16
+        textStyle = "Normal"
 
         paragraphAlignment = .left
         lineSpacing = 1.0
@@ -240,6 +465,167 @@ struct WordCraftView: View {
         contentHeight = 842
 
         selectedTab = .home
+    }
+
+    private func saveCurrentDocument() {
+        let isExisting = documentStore.documents.contains { $0.id == activeDocument.id }
+        let isUntouchedDraft = attributedText.length == 0 && documentTitle == "Untitled Document" && !isExisting
+        guard !isUntouchedDraft else { return }
+        activeDocument.update(
+            title: documentTitle,
+            text: attributedText,
+            paperSize: paperSize,
+            pageOrientation: pageOrientation,
+            marginPreset: marginPreset
+        )
+        documentTitle = activeDocument.title
+        documentStore.save(activeDocument)
+    }
+
+    private func scheduleAutoSave() {
+        pendingAutoSave?.cancel()
+        pendingAutoSave = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 600_000_000)
+            guard !Task.isCancelled else { return }
+            saveCurrentDocument()
+        }
+    }
+
+    private func openDocument(_ document: WordDocument) {
+        pendingAutoSave?.cancel()
+        saveCurrentDocument()
+        activeDocument = document
+        documentTitle = document.title
+        attributedText = document.attributedContent
+        paperSize = document.paperSize
+        pageOrientation = document.pageOrientation
+        marginPreset = document.marginPreset
+        selectedRange = NSRange(location: 0, length: 0)
+        contentHeight = max(842, pageDimensions.height)
+        selectedTab = .home
+    }
+
+    private func prepareExport() {
+        let data = try? attributedText.data(
+            from: NSRange(location: 0, length: attributedText.length),
+            documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf]
+        )
+        guard let data else { return }
+        let safeName = documentTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "Untitled Document" : documentTitle
+        let fileName = safeName.replacingOccurrences(of: "/", with: "-") + ".rtf"
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
+        do {
+            try data.write(to: url, options: .atomic)
+            exportURL = url
+        } catch {
+            exportURL = nil
+        }
+    }
+
+    private func prepareDocxExport() {
+        let safeName = documentTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "Untitled Document" : documentTitle
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(safeFileName(safeName) + ".docx")
+        do {
+            let data = try WordDocxCodec.encode(
+                attributedText,
+                paperSize: paperSize,
+                pageOrientation: pageOrientation,
+                marginPreset: marginPreset
+            )
+            try data.write(to: url, options: .atomic)
+            exportURL = url
+        } catch {
+            exportURL = nil
+            documentStore.reportError("Could not export the DOCX document.")
+        }
+    }
+
+    private func preparePDFExport() {
+        let pageSize = pageDimensions
+        let pageRect = CGRect(origin: .zero, size: pageSize)
+        let margin = marginPreset.value
+        let contentSize = CGSize(
+            width: max(1, pageSize.width - margin * 2),
+            height: max(1, pageSize.height - margin * 2)
+        )
+        let storage = NSTextStorage(attributedString: attributedText)
+        let layout = NSLayoutManager()
+        storage.addLayoutManager(layout)
+        let renderer = UIGraphicsPDFRenderer(bounds: pageRect)
+        let pdfData = renderer.pdfData { context in
+            var nextGlyph = 0
+            let glyphCount = layout.numberOfGlyphs
+            repeat {
+                let container = NSTextContainer(size: contentSize)
+                container.lineFragmentPadding = 0
+                layout.addTextContainer(container)
+                layout.ensureLayout(for: container)
+                let range = layout.glyphRange(for: container)
+                guard range.length > 0 || glyphCount == 0 else { break }
+                context.beginPage()
+                UIColor.white.setFill()
+                context.fill(pageRect)
+                let origin = CGPoint(x: margin, y: margin)
+                layout.drawBackground(forGlyphRange: range, at: origin)
+                layout.drawGlyphs(forGlyphRange: range, at: origin)
+                nextGlyph = NSMaxRange(range)
+                if glyphCount == 0 { break }
+            } while nextGlyph < glyphCount
+        }
+        let fileName = safeFileName(documentTitle) + ".pdf"
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
+        do { try pdfData.write(to: url, options: .atomic); exportURL = url }
+        catch { exportURL = nil }
+    }
+
+    private func printDocument() {
+        preparePDFExport()
+        guard let exportURL else { return }
+        let controller = UIPrintInteractionController.shared
+        let info = UIPrintInfo(dictionary: nil)
+        info.jobName = documentTitle
+        info.outputType = .general
+        controller.printInfo = info
+        controller.printingItem = exportURL
+        controller.present(animated: true, completionHandler: nil)
+    }
+
+    private func findNext() {
+        guard !findQuery.isEmpty else { findStatus = "Enter text to find."; return }
+        let source = attributedText.string as NSString
+        guard source.length > 0 else { findStatus = "No match found."; return }
+        let start = min(NSMaxRange(selectedRange), source.length)
+        let tail = NSRange(location: start, length: source.length - start)
+        var match = source.range(of: findQuery, options: [.caseInsensitive], range: tail)
+        if match.location == NSNotFound {
+            match = source.range(of: findQuery, options: [.caseInsensitive], range: NSRange(location: 0, length: start))
+        }
+        guard match.location != NSNotFound else { findStatus = "No match found."; return }
+        selectedRange = match
+        findStatus = "Match at character \(match.location + 1)."
+    }
+
+    private func replaceAll() {
+        guard !findQuery.isEmpty else { return }
+        let source = attributedText.string as NSString
+        var matches: [NSRange] = []
+        var cursor = 0
+        while cursor < source.length {
+            let range = source.range(of: findQuery, options: [.caseInsensitive], range: NSRange(location: cursor, length: source.length - cursor))
+            guard range.location != NSNotFound else { break }
+            matches.append(range)
+            cursor = NSMaxRange(range)
+        }
+        guard !matches.isEmpty else { findStatus = "No matches to replace."; return }
+        let updated = NSMutableAttributedString(attributedString: attributedText)
+        for range in matches.reversed() {
+            updated.replaceCharacters(in: range, with: replacementQuery)
+        }
+        attributedText = updated
+        selectedRange = NSRange(location: 0, length: 0)
+        findStatus = "Replaced \(matches.count) occurrence(s)."
     }
 
     // MARK: - Page Break
@@ -560,7 +946,7 @@ struct WordCraftView: View {
 
         var attributes: [NSAttributedString.Key: Any] = [
             .font: finalFont,
-            .foregroundColor: UIColor.black,
+            .foregroundColor: UIColor(textColor),
             .paragraphStyle: paragraphStyle
         ]
 
@@ -568,6 +954,10 @@ struct WordCraftView: View {
 
             attributes[.underlineStyle] =
                 NSUnderlineStyle.single.rawValue
+        }
+
+        if isHighlighted {
+            attributes[.backgroundColor] = UIColor(highlightColor)
         }
 
         return attributes
@@ -638,6 +1028,19 @@ struct WordCraftView: View {
         attributedText = mutableText
     }
 
+    private func applyTextStyle(_ style: String) {
+        let size: Double
+        let bold: Bool
+        switch style {
+        case "Title": size = 32; bold = true
+        case "Heading 1": size = 26; bold = true
+        case "Heading 2": size = 21; bold = true
+        default: size = 16; bold = false
+        }
+        fontSize = size
+        isBold = bold
+    }
+
     // MARK: - Apply Underline
 
     private func applyUnderline(enabled: Bool) {
@@ -679,6 +1082,32 @@ struct WordCraftView: View {
         }
 
         attributedText = mutableText
+    }
+
+    private func applyTextColor(_ color: Color) {
+        guard selectedRange.length > 0 else { return }
+        let safeRange = NSIntersectionRange(selectedRange, NSRange(location: 0, length: attributedText.length))
+        guard safeRange.length > 0 else { return }
+        let updated = NSMutableAttributedString(attributedString: attributedText)
+        updated.addAttribute(.foregroundColor, value: UIColor(color), range: safeRange)
+        attributedText = updated
+    }
+
+    private func applyHighlight(enabled: Bool) {
+        applyHighlight(color: enabled ? highlightColor : nil)
+    }
+
+    private func applyHighlight(color: Color?) {
+        guard selectedRange.length > 0 else { return }
+        let safeRange = NSIntersectionRange(selectedRange, NSRange(location: 0, length: attributedText.length))
+        guard safeRange.length > 0 else { return }
+        let updated = NSMutableAttributedString(attributedString: attributedText)
+        if let color {
+            updated.addAttribute(.backgroundColor, value: UIColor(color), range: safeRange)
+        } else {
+            updated.removeAttribute(.backgroundColor, range: safeRange)
+        }
+        attributedText = updated
     }
 
     // MARK: - Apply Font Size
@@ -908,5 +1337,28 @@ struct WordCraftView: View {
         }
 
         return ranges
+    }
+}
+
+private struct PageCanvasBackground: View {
+    let pageHeight: CGFloat
+
+    var body: some View {
+        Canvas { context, size in
+            guard pageHeight > 0 else { return }
+            let pageCount = max(1, Int(ceil(size.height / pageHeight)))
+            for page in 0..<pageCount {
+                let y = CGFloat(page) * pageHeight
+                let rect = CGRect(x: 0, y: y, width: size.width, height: min(pageHeight, size.height - y))
+                guard rect.height > 0 else { continue }
+                context.fill(Path(rect), with: .color(.white))
+                context.stroke(
+                    Path(rect.insetBy(dx: 0.5, dy: 0.5)),
+                    with: .color(Color(uiColor: .separator).opacity(0.5)),
+                    lineWidth: 1
+                )
+            }
+        }
+        .accessibilityHidden(true)
     }
 }

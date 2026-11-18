@@ -15,9 +15,12 @@ struct RichTextEditor: UIViewRepresentable {
     @Binding var isBold: Bool
     @Binding var isItalic: Bool
     @Binding var isUnderlined: Bool
+    @Binding var isHighlighted: Bool
 
     @Binding var fontSize: Double
     @Binding var fontFamily: String
+    @Binding var textColor: Color
+    @Binding var highlightColor: Color
 
     @Binding var paragraphAlignment: NSTextAlignment
     @Binding var lineSpacing: Double
@@ -60,8 +63,8 @@ struct RichTextEditor: UIViewRepresentable {
         textView.isSelectable = true
         textView.isScrollEnabled = false
 
-        textView.backgroundColor = .white
-        textView.textColor = .black
+        textView.backgroundColor = .clear
+        textView.isOpaque = false
 
         textView.textContainerInset = pageInsets
         textView.textContainer.widthTracksTextView = true
@@ -98,28 +101,19 @@ struct RichTextEditor: UIViewRepresentable {
 
         // Update document content
 
+        let safeLocation = min(selectedRange.location, attributedText.length)
+        let safeLength = min(selectedRange.length, attributedText.length - safeLocation)
+        let requestedSelection = NSRange(location: safeLocation, length: safeLength)
+
         if !uiView.attributedText.isEqual(to: attributedText) {
-
-            let safeLocation = min(
-                selectedRange.location,
-                attributedText.length
-            )
-
-            let safeLength = min(
-                selectedRange.length,
-                attributedText.length - safeLocation
-            )
-
-            let requestedSelection = NSRange(
-                location: safeLocation,
-                length: safeLength
-            )
-
             context.coordinator.isUpdating = true
-
             uiView.attributedText = attributedText
-            uiView.selectedRange = requestedSelection
+            context.coordinator.isUpdating = false
+        }
 
+        if uiView.selectedRange != requestedSelection {
+            context.coordinator.isUpdating = true
+            uiView.selectedRange = requestedSelection
             context.coordinator.isUpdating = false
         }
 
@@ -216,7 +210,7 @@ struct RichTextEditor: UIViewRepresentable {
 
         var attributes: [NSAttributedString.Key: Any] = [
             .font: finalFont,
-            .foregroundColor: UIColor.black,
+            .foregroundColor: UIColor(textColor),
             .paragraphStyle: paragraphStyle
         ]
 
@@ -224,6 +218,10 @@ struct RichTextEditor: UIViewRepresentable {
 
             attributes[.underlineStyle] =
                 NSUnderlineStyle.single.rawValue
+        }
+
+        if isHighlighted {
+            attributes[.backgroundColor] = UIColor(highlightColor)
         }
 
         return attributes
